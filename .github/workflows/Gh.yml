@@ -5,7 +5,1020 @@ import { GAME_CONFIG } from '@shared/gameTypes';
 import { clampPosition, checkCollision, getDistance } from '@/lib/gameLogic';
 
 interface ChallengeGameCanvasProps {
+  width: number;salla theme preview
+import React, { useRef, useEffect, useCallback } from 'react';
+import { useGameStore } from '@/lib/stores/useGameStore';
+import { useChallengeStore } from '@/lib/stores/useChallengeStore';
+import { GAME_CONFIG } from '@shared/gameTypes';
+import { clampPosition, checkCollision, getDistance } from '@/lib/gameLogic';
+
+interface ChallengeGameCanvasProps {
   width: number;
+  height: number;
+}
+
+export default function ChallengeGameCanvas({ width, height }: ChallengeGameCanvasProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const animationFrameRef = useRef<number>();
+  const { players, dots, playerId, movePlayer } = useGameStore();
+  const { 
+    currentChallenge, 
+    isInChallenge, 
+    challengeStartTime, 
+    challengeScore, 
+    challengeData,
+    updateChallengeScore,
+    updateChallengeData,
+    endChallenge
+  } = useChallengeStore();
+
+  // Handle mouse/touch input
+  const handlePointerMove = useCallback((e: React.PointerEvent) => {
+    if (!canvasRef.current || !isInChallenge) return;
+    
+    const rect = canvasRef.current.getBoundingClientRect();
+    const scaleX = GAME_CONFIG.CANVAS_WIDTH / rect.width;
+    const scaleY = GAME_CONFIG.CANVAS_HEIGHT / rect.height;
+    
+    const x = (e.clientX - rect.left) * scaleX;
+    const y = (e.clientY - rect.top) * scaleY;
+    
+    const clamped = clampPosition(x, y, GAME_CONFIG.CANVAS_WIDTH, GAME_CONFIG.CANVAS_HEIGHT);
+    
+    // Apply challenge-specific movement restrictions
+    if (currentChallenge?.type === 'survival') {
+      const centerX = GAME_CONFIG.CANVAS_WIDTH / 2;
+      const centerY = GAME_CONFIG.CANVAS_HEIGHT / 2;
+      const currentRadius = calculateSurvivalRadius();
+      const distanceFromCenter = getDistance(clamped.x, clamped.y, centerX, centerY);
+      
+      if (distanceFromCenter > currentRadius) {
+        // Clamp to survival area boundary
+        const angle = Math.atan2(clamped.y - centerY, clamped.x - centerX);
+        clamped.x = centerX + Math.cos(angle) * currentRadius;
+        clamped.y = centerY + Math.sin(angle) * currentRadius;
+      }
+    }
+    
+    movePlayer(clamped.x, clamped.y);
+  }, [movePlayer, isInChallenge, currentChallenge]);
+
+  const calculateSurvivalRadius = useCallback(() => {
+    if (!currentChallenge || !challengeStartTime || currentChallenge.type !== 'survival') {
+      return GAME_CONFIG.CANVAS_WIDTH / 2;
+    }
+    
+    const elapsed = (Date.now() - challengeStartTime) / 1000;
+    const config = currentChallenge.config;
+    const startRadius = config.startRadius || 250;
+    const shrinkRate = config.shrinkRate || 15;
+    
+    return Math.max(50, startRadius - (elapsed * shrinkRate));
+  }, [currentChallenge, challengeStartTime]);
+
+  // Check challenge-specific conditions
+  const checkChallengeConditions = useCallback(() => {
+    if (!currentChallenge || !isInChallenge || !challengeStartTime) return;
+    
+    const currentPlayer = players.get(playerId || '');
+    if (!currentPlayer) return;
+    
+    const elapsed = (Date.now() - challengeStartTime) / 1000;
+    
+    switch (currentChallenge.type) {
+      case 'speedRun': {
+        const dotsCollected = challengeData.dotsCollected || 0;
+        const target = currentChallenge.config.dotsToCollect || 20;
+        
+        if (dotsCollected >= target) {
+          updateChallengeScore(Math.floor((target * 1000) / elapsed));
+          endChallenge(true);
+        } else if (elapsed >= (currentChallenge.config.timeLimit || 60)) {
+          endChallenge(false);
+        }
+        break;
+      }
+      
+      case 'colorMatch': {
+        const misses = challengeData.misses || 0;
+        const maxMisses = currentChallenge.config.maxMisses || 3;
+        
+        if (misses >= maxMisses) {
+          endChallenge(false);
+        } else if (challengeScore >= (currentChallenge.config.targetScore || 15)) {
+          endChallenge(true);
+        }
+        break;
+      }
+      
+      case 'avoidance': {
+        const misses = challengeData.misses || 0;
+        const maxMisses = currentChallenge.config.maxMisses || 1;
+        
+        if (misses >= maxMisses) {
+          endChallenge(false);
+        } else if (challengeScore >= (currentChallenge.config.targetScore || 25)) {
+          endChallenge(true);
+        }
+        break;
+      }
+      
+      case 'kingOfHill': {
+        const config = currentChallenge.config;
+        const hillCenter = config.hillCenter || { x: 400, y: 300 };
+        const hillRadius = config.hillRadius || 80;
+        const pointsPerSecond = config.pointsPerSecond || 2;
+        
+        const inHill = getDistance(currentPlayer.x, currentPlayer.y, hillCenter.x, hillCenter.y) <= hillRadius;
+        
+        if (inHill) {
+          const timeInHill = (challengeData.timeInHill || 0) + 0.016; // ~60fps
+          updateChallengeData({ timeInHill });
+          updateChallengeScore(Math.floor(timeInHill * pointsPerSecond));
+        }
+        
+        if (challengeScore >= (config.targetScore || 100)) {
+          endChallenge(true);
+        } else if (elapsed >= (config.timeLimit || 90)) {
+          endChallenge(challengeScore >= (config.targetScore || 100));
+        }
+        break;
+      }
+      
+      case 'survival': {
+        const centerX = GAME_CONFIG.CANVAS_WIDTH / 2;
+        const centerY = GAME_CONFIG.CANVAS_HEIGHT / 2;
+        const currentRadius = calculateSurvivalRadius();
+        const distanceFromCenter = getDistance(currentPlayer.x, currentPlayer.y, centerX, centerY);
+        
+        if (distanceFromCenter > currentRadius) {
+          endChallenge(false);
+        } else {
+          updateChallengeScore(Math.floor(elapsed * 10));
+          
+          if (elapsed >= (currentChallenge.config.timeLimit || 120)) {
+            endChallenge(true);
+          }
+        }
+        break;
+      }
+      
+      case 'relay': {
+        const checkpoints = currentChallenge.config.checkpoints || [];
+        const currentCheckpoint = challengeData.currentCheckpoint || 0;
+        
+        if (currentCheckpoint < checkpoints.length) {
+          const checkpoint = checkpoints[currentCheckpoint];
+          const distance = getDistance(currentPlayer.x, currentPlayer.y, checkpoint.x, checkpoint.y);
+          
+          if (distance <= 25) {
+            const newCheckpoint = currentCheckpoint + 1;
+            updateChallengeData({ currentCheckpoint: newCheckpoint });
+            
+            if (newCheckpoint >= checkpoints.length) {
+              updateChallengeScore(Math.floor((checkpoints.length * 1000) / elapsed));
+              endChallenge(true);
+            }
+          }
+        }
+        
+        if (elapsed >= (currentChallenge.config.timeLimit || 90)) {
+          endChallenge(false);
+        }
+        break;
+      }
+      
+      case 'precision': {
+        // Precision targets are handled via click events
+        if (elapsed >= (currentChallenge.duration || 120)) {
+          const targets = currentChallenge.config.targets || [];
+          const hits = challengeData.hits || 0;
+          endChallenge(hits >= targets.length);
+        }
+        break;
+      }
+    }
+  }, [currentChallenge, isInChallenge, challengeStartTime, challengeData, challengeScore, players, playerId, updateChallengeScore, updateChallengeData, endChallenge, calculateSurvivalRadius]);
+
+  // Handle dot collection for challenges
+  const handleDotCollection = useCallback((dot: any, player: any) => {
+    if (!currentChallenge || !isInChallenge) return false;
+    
+    let shouldCollect = true;
+    let points = dot.points;
+    
+    switch (currentChallenge.type) {
+      case 'speedRun': {
+        const dotsCollected = (challengeData.dotsCollected || 0) + 1;
+        updateChallengeData({ dotsCollected });
+        break;
+      }
+      
+      case 'colorMatch': {
+        const allowedColors = currentChallenge.config.allowedColors || [];
+        const forbiddenColors = currentChallenge.config.forbiddenColors || [];
+        
+        if (forbiddenColors.includes(dot.color) || (allowedColors.length > 0 && !allowedColors.includes(dot.color))) {
+          const misses = (challengeData.misses || 0) + 1;
+          updateChallengeData({ misses });
+          shouldCollect = false;
+          points = 0;
+        }
+        break;
+      }
+      
+      case 'avoidance': {
+        const forbiddenColors = currentChallenge.config.forbiddenColors || ['#ff4444'];
+        
+        if (forbiddenColors.includes(dot.color)) {
+          const misses = (challengeData.misses || 0) + 1;
+          updateChallengeData({ misses });
+          shouldCollect = false;
+          points = 0;
+        }
+        break;
+      }
+      
+      case 'treasure': {
+        if (dot.color === '#FFD700') { // Golden dot
+          points = currentChallenge.config.treasurePoints || 10;
+        }
+        break;
+      }
+    }
+    
+    if (shouldCollect && points > 0) {
+      updateChallengeScore(challengeScore + points);
+    }
+    
+    return shouldCollect;
+  }, [currentChallenge, isInChallenge, challengeData, challengeScore, updateChallengeData, updateChallengeScore]);
+
+  // Custom rendering for challenge modes
+  const renderChallengeElements = useCallback((ctx: CanvasRenderingContext2D) => {
+    if (!currentChallenge || !isInChallenge) return;
+    
+    switch (currentChallenge.type) {
+      case 'kingOfHill': {
+        const config = currentChallenge.config;
+        const hillCenter = config.hillCenter || { x: 400, y: 300 };
+        const hillRadius = config.hillRadius || 80;
+        
+        // Draw hill area
+        ctx.fillStyle = 'rgba(255, 215, 0, 0.2)';
+        ctx.beginPath();
+        ctx.arc(hillCenter.x, hillCenter.y, hillRadius, 0, Math.PI * 2);
+        ctx.fill();
+        
+        ctx.strokeStyle = '#FFD700';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        
+        // Draw "KING OF HILL" text
+        ctx.fillStyle = '#B8860B';
+        ctx.font = 'bold 16px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('KING OF HILL', hillCenter.x, hillCenter.y);
+        break;
+      }
+      
+      case 'survival': {
+        const centerX = GAME_CONFIG.CANVAS_WIDTH / 2;
+        const centerY = GAME_CONFIG.CANVAS_HEIGHT / 2;
+        const currentRadius = calculateSurvivalRadius();
+        
+        // Draw safe area
+        ctx.fillStyle = 'rgba(0, 255, 0, 0.1)';
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, currentRadius, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Draw danger zone
+        ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
+        ctx.fillRect(0, 0, GAME_CONFIG.CANVAS_WIDTH, GAME_CONFIG.CANVAS_HEIGHT);
+        
+        // Cut out safe area
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, currentRadius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
+        
+        // Draw border
+        ctx.strokeStyle = '#ff4444';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, currentRadius, 0, Math.PI * 2);
+        ctx.stroke();
+        break;
+      }
+      
+      case 'relay': {
+        const checkpoints = currentChallenge.config.checkpoints || [];
+        const currentCheckpoint = challengeData.currentCheckpoint || 0;
+        
+        checkpoints.forEach((checkpoint, index) => {
+          const isActive = index === currentCheckpoint;
+          const isCompleted = index < currentCheckpoint;
+          
+          ctx.fillStyle = isCompleted ? '#22c55e' : isActive ? '#3b82f6' : '#94a3b8';
+          ctx.beginPath();
+          ctx.arc(checkpoint.x, checkpoint.y, 20, 0, Math.PI * 2);
+          ctx.fill();
+          
+          ctx.fillStyle = 'white';
+          ctx.font = 'bold 14px Arial';
+          ctx.textAlign = 'center';
+          ctx.fillText((index + 1).toString(), checkpoint.x, checkpoint.y + 5);
+        });
+        break;
+      }
+      
+      case 'precision': {
+        const targets = currentChallenge.config.targets || [];
+        const hits = challengeData.hits || 0;
+        
+        targets.forEach((target, index) => {
+          const isHit = index < hits;
+          
+          ctx.strokeStyle = isHit ? '#22c55e' : '#ef4444';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(target.x, target.y, target.radius, 0, Math.PI * 2);
+          ctx.stroke();
+          
+          if (!isHit) {
+            ctx.strokeStyle = '#ef4444';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(target.x - 10, target.y - 10);
+            ctx.lineTo(target.x + 10, target.y + 10);
+            ctx.moveTo(target.x + 10, target.y - 10);
+            ctx.lineTo(target.x - 10, target.y + 10);
+            ctx.stroke();
+          } else {
+            ctx.fillStyle = '#22c55e';
+            ctx.font = 'bold 16px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('✓', target.x, target.y + 6);
+          }
+        });
+        break;
+      }
+    }
+  }, [currentChallenge, isInChallenge, challengeData, calculateSurvivalRadius]);
+
+  // Handle precision target clicks
+  const handleCanvasClick = useCallback((e: React.MouseEvent) => {
+    if (!currentChallenge || currentChallenge.type !== 'precision' || !isInChallenge) return;
+    
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    
+    const scaleX = GAME_CONFIG.CANVAS_WIDTH / rect.width;
+    const scaleY = GAME_CONFIG.CANVAS_HEIGHT / rect.height;
+    
+    const x = (e.clientX - rect.left) * scaleX;
+    const y = (e.clientY - rect.top) * scaleY;
+    
+    const targets = currentChallenge.config.targets || [];
+    const hits = challengeData.hits || 0;
+    
+    if (hits < targets.length) {
+      const target = targets[hits];
+      const distance = getDistance(x, y, target.x, target.y);
+      
+      if (distance <= target.radius) {
+        const newHits = hits + 1;
+        updateChallengeData({ hits: newHits });
+        updateChallengeScore(challengeScore + 10);
+        
+        if (newHits >= targets.length) {
+          endChallenge(true);
+        }
+      } else {
+        const misses = (challengeData.misses || 0) + 1;
+        updateChallengeData({ misses });
+        
+        const penalty = currentChallenge.config.penaltyPerMiss || 10;
+        updateChallengeScore(Math.max(0, challengeScore - penalty));
+        
+        if (misses >= (currentChallenge.config.maxMisses || 2)) {
+          endChallenge(false);
+        }
+      }
+    }
+  }, [currentChallenge, isInChallenge, challengeData, challengeScore, updateChallengeData, updateChallengeScore, endChallenge]);
+
+  // Main render function
+  const render = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Clear canvas
+    ctx.fillStyle = '#f0f0f0';
+    ctx.fillRect(0, 0, GAME_CONFIG.CANVAS_WIDTH, GAME_CONFIG.CANVAS_HEIGHT);
+
+    // Draw grid pattern
+    ctx.strokeStyle = '#e0e0e0';
+    ctx.lineWidth = 1;
+    const gridSize = 50;
+    for (let x = 0; x <= GAME_CONFIG.CANVAS_WIDTH; x += gridSize) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, GAME_CONFIG.CANVAS_HEIGHT);
+      ctx.stroke();
+    }
+    for (let y = 0; y <= GAME_CONFIG.CANVAS_HEIGHT; y += gridSize) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(GAME_CONFIG.CANVAS_WIDTH, y);
+      ctx.stroke();
+    }
+
+    // Render challenge-specific elements
+    renderChallengeElements(ctx);
+
+    // Draw dots (with challenge-specific modifications)
+    dots.forEach(dot => {
+      let dotColor = dot.color;
+      
+      // Special rendering for treasure hunt
+      if (currentChallenge?.type === 'treasure' && dot.color === '#FFD700') {
+        // Make treasure dots sparkle
+        const time = Date.now() / 1000;
+        const sparkle = Math.sin(time * 4) * 0.3 + 0.7;
+        ctx.save();
+        ctx.globalAlpha = sparkle;
+        
+        // Draw larger golden dot
+        ctx.fillStyle = '#FFD700';
+        ctx.beginPath();
+        ctx.arc(dot.x, dot.y, GAME_CONFIG.DOT_SIZE * 0.8, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Draw sparkle effect
+        ctx.strokeStyle = '#FFF700';
+        ctx.lineWidth = 2;
+        const sparkleSize = 8;
+        ctx.beginPath();
+        ctx.moveTo(dot.x - sparkleSize, dot.y);
+        ctx.lineTo(dot.x + sparkleSize, dot.y);
+        ctx.moveTo(dot.x, dot.y - sparkleSize);
+        ctx.lineTo(dot.x, dot.y + sparkleSize);
+        ctx.stroke();
+        
+        ctx.restore();
+      } else {
+        ctx.fillStyle = dotColor;
+        ctx.beginPath();
+        ctx.arc(dot.x, dot.y, GAME_CONFIG.DOT_SIZE / 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      
+      // Draw points value
+      ctx.fillStyle = '#333';
+      ctx.font = '12px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText(dot.points.toString(), dot.x, dot.y - GAME_CONFIG.DOT_SIZE);
+    });
+
+    // Draw players
+    const playersArray = Array.from(players.values());
+    playersArray.forEach(player => {
+      // Player circle
+      ctx.fillStyle = player.color;
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, GAME_CONFIG.PLAYER_SIZE / 2, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Player border
+      ctx.strokeStyle = player.id === playerId ? '#fff' : '#333';
+      ctx.lineWidth = player.id === playerId ? 3 : 2;
+      ctx.stroke();
+      
+      // Player name
+      ctx.fillStyle = '#333';
+      ctx.font = 'bold 14px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText(player.name, player.x, player.y - GAME_CONFIG.PLAYER_SIZE);
+    });
+
+    // Check challenge conditions each frame
+    checkChallengeConditions();
+
+    animationFrameRef.current = requestAnimationFrame(render);
+  }, [players, dots, playerId, currentChallenge, isInChallenge, challengeData, renderChallengeElements, checkChallengeConditions]);
+
+  useEffect(() => {
+    if (isInChallenge) {
+      render();
+    }
+    
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, [render, isInChallenge]);
+
+  if (!isInChallenge) {
+    return null;
+  }
+
+  return (
+    <canvas
+      ref={canvasRef}
+      width={GAME_CONFIG.CANVAS_WIDTH}
+      height={GAME_CONFIG.CANVAS_HEIGHT}
+      className="border border-gray-300 rounded-lg cursor-crosshair touch-none"
+      style={{ 
+        width: width,
+        height: height,
+        maxWidth: '100%',
+        maxHeight: '100%'
+      }}
+      onPointerMove={handlePointerMove}
+      onPointerEnter={handlePointerMove}
+      onClick={handleCanvasClick}
+    />
+  );
+}
+
+
+
+
+
+
+
+
+
+import { DailyChallenge, ChallengeType, ChallengeProgress, ChallengeLeaderboard, CHALLENGE_TEMPLATES } from '@shared/challengeTypes';
+
+class ChallengeManager {
+  private challenges = new Map<string, DailyChallenge>();
+  private playerProgress = new Map<string, Map<string, ChallengeProgress>>();
+  private leaderboards = new Map<string, ChallengeLeaderboard>();
+
+  constructor() {
+    this.initializeDailyChallenges();
+  }
+
+  private initializeDailyChallenges() {
+    // Generate today's challenge
+    const today = new Date().toISOString().split('T')[0];
+    const todayChallenge = this.generateDailyChallenge(today);
+    this.challenges.set(today, todayChallenge);
+    
+    // Initialize leaderboard for today
+    this.leaderboards.set(todayChallenge.id, {
+      challengeId: todayChallenge.id,
+      entries: []
+    });
+  }
+
+  private generateDailyChallenge(date: string): DailyChallenge {
+    // Use date as seed for consistent daily challenges
+    const seed = this.hashCode(date);
+    const challengeTypes = Object.keys(CHALLENGE_TEMPLATES) as ChallengeType[];
+    const selectedType = challengeTypes[Math.abs(seed) % challengeTypes.length];
+    
+    const template = CHALLENGE_TEMPLATES[selectedType];
+    const challengeId = `daily-${date}-${selectedType}`;
+    
+    // Add some daily variations to make it unique
+    const variations = this.applyDailyVariations(template, seed);
+    
+    return {
+      id: challengeId,
+      date,
+      ...template,
+      ...variations
+    };
+  }
+
+  private applyDailyVariations(template: any, seed: number): any {
+    const variations: any = {};
+    
+    // Vary difficulty and rewards based on seed
+    const difficultyMod = Math.abs(seed % 3);
+    switch (difficultyMod) {
+      case 0:
+        variations.difficulty = 'easy';
+        break;
+      case 1:
+        variations.difficulty = 'medium';
+        break;
+      case 2:
+        variations.difficulty = 'hard';
+        break;
+    }
+    
+    // Adjust config based on difficulty
+    if (template.config) {
+      variations.config = { ...template.config };
+      
+      if (variations.difficulty === 'hard') {
+        if (variations.config.timeLimit) variations.config.timeLimit *= 0.8;
+        if (variations.config.targetScore) variations.config.targetScore *= 1.3;
+        if (variations.config.maxMisses) variations.config.maxMisses = Math.max(1, variations.config.maxMisses - 1);
+      } else if (variations.difficulty === 'easy') {
+        if (variations.config.timeLimit) variations.config.timeLimit *= 1.2;
+        if (variations.config.targetScore) variations.config.targetScore *= 0.8;
+        if (variations.config.maxMisses) variations.config.maxMisses += 1;
+      }
+    }
+    
+    return variations;
+  }
+
+  private hashCode(str: string): number {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    return hash;
+  }
+
+  getTodaysChallenge(): DailyChallenge | null {
+    const today = new Date().toISOString().split('T')[0];
+    return this.challenges.get(today) || null;
+  }
+
+  getChallenge(challengeId: string): DailyChallenge | null {
+    const challengeArray = Array.from(this.challenges.values());
+    for (const challenge of challengeArray) {
+      if (challenge.id === challengeId) {
+        return challenge;
+      }
+    }
+    return null;
+  }
+
+  getPlayerProgress(playerId: string, challengeId: string): ChallengeProgress | null {
+    const playerChallenges = this.playerProgress.get(playerId);
+    if (!playerChallenges) return null;
+    return playerChallenges.get(challengeId) || null;
+  }
+
+  initializePlayerProgress(playerId: string, challengeId: string): ChallengeProgress {
+    if (!this.playerProgress.has(playerId)) {
+      this.playerProgress.set(playerId, new Map());
+    }
+    
+    const progress: ChallengeProgress = {
+      playerId,
+      challengeId,
+      completed: false,
+      bestScore: 0,
+      attempts: 0,
+      progress: {}
+    };
+    
+    this.playerProgress.get(playerId)!.set(challengeId, progress);
+    return progress;
+  }
+
+  updatePlayerProgress(playerId: string, challengeId: string, score: number, completed: boolean, progressData?: Record<string, any>): void {
+    let progress = this.getPlayerProgress(playerId, challengeId);
+    
+    if (!progress) {
+      progress = this.initializePlayerProgress(playerId, challengeId);
+    }
+    
+    progress.attempts++;
+    progress.bestScore = Math.max(progress.bestScore, score);
+    
+    if (completed && !progress.completed) {
+      progress.completed = true;
+      progress.completedAt = new Date().toISOString();
+    }
+    
+    if (progressData) {
+      progress.progress = { ...progress.progress, ...progressData };
+    }
+  }
+
+  updateLeaderboard(challengeId: string, playerId: string, playerName: string, score: number): void {
+    let leaderboard = this.leaderboards.get(challengeId);
+    
+    if (!leaderboard) {
+      leaderboard = {
+        challengeId,
+        entries: []
+      };
+      this.leaderboards.set(challengeId, leaderboard);
+    }
+    
+    // Find existing entry or create new one
+    let entry = leaderboard.entries.find(e => e.playerId === playerId);
+    
+    if (entry) {
+      if (score > entry.score) {
+        entry.score = score;
+        entry.completedAt = new Date().toISOString();
+      }
+    } else {
+      entry = {
+        playerId,
+        playerName,
+        score,
+        completedAt: new Date().toISOString(),
+        rank: 0
+      };
+      leaderboard.entries.push(entry);
+    }
+    
+    // Sort and update ranks
+    leaderboard.entries.sort((a, b) => b.score - a.score);
+    leaderboard.entries.forEach((entry, index) => {
+      entry.rank = index + 1;
+    });
+  }
+
+  getLeaderboard(challengeId: string, limit: number = 10): ChallengeLeaderboard | null {
+    const leaderboard = this.leaderboards.get(challengeId);
+    if (!leaderboard) return null;
+    
+    return {
+      ...leaderboard,
+      entries: leaderboard.entries.slice(0, limit)
+    };
+  }
+
+  getAllPlayerChallenges(playerId: string): ChallengeProgress[] {
+    const playerChallenges = this.playerProgress.get(playerId);
+    if (!playerChallenges) return [];
+    
+    return Array.from(playerChallenges.values());
+  }
+
+  getCompletedChallengesCount(playerId: string): number {
+    return this.getAllPlayerChallenges(playerId).filter(p => p.completed).length;
+  }
+
+  cleanupOldChallenges(): void {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - 7); // Keep 7 days of challenges
+    
+    const cutoffStr = cutoffDate.toISOString().split('T')[0];
+    
+    const challengeEntries = Array.from(this.challenges.entries());
+    for (const [date, challenge] of challengeEntries) {
+      if (date < cutoffStr) {
+        this.challenges.delete(date);
+        this.leaderboards.delete(challenge.id);
+      }
+    }
+  }
+}
+
+export const challengeManager = new ChallengeManager();
+
+
+
+
+
+
+export interface DailyChallenge {
+  id: string;
+  date: string; // YYYY-MM-DD format
+  name: string;
+  description: string;
+  type: ChallengeType;
+  config: ChallengeConfig;
+  rewards: ChallengeReward[];
+  difficulty: 'easy' | 'medium' | 'hard';
+  duration: number; // seconds
+}
+
+export type ChallengeType = 
+  | 'speedRun'      // Collect X dots as fast as possible
+  | 'colorMatch'    // Only collect specific colors
+  | 'avoidance'     // Avoid red dots while collecting others
+  | 'kingOfHill'    // Stay in center area as long as possible
+  | 'treasure'      // Find and collect special golden dots
+  | 'survival'      // Last player standing with shrinking play area
+  | 'relay'         // Pass through checkpoints in order
+  | 'precision'     // Hit exact targets without missing
+
+export interface ChallengeConfig {
+  // Common configs
+  targetScore?: number;
+  timeLimit?: number;
+  maxMisses?: number;
+  
+  // Speed run specific
+  dotsToCollect?: number;
+  
+  // Color match specific
+  allowedColors?: string[];
+  forbiddenColors?: string[];
+  
+  // King of hill specific
+  hillCenter?: { x: number; y: number };
+  hillRadius?: number;
+  pointsPerSecond?: number;
+  
+  // Treasure hunt specific
+  treasureCount?: number;
+  treasurePoints?: number;
+  
+  // Survival specific
+  shrinkRate?: number; // pixels per second
+  startRadius?: number;
+  
+  // Relay specific
+  checkpoints?: Array<{ x: number; y: number; order: number }>;
+  
+  // Precision specific
+  targets?: Array<{ x: number; y: number; radius: number }>;
+  penaltyPerMiss?: number;
+}
+
+export interface ChallengeReward {
+  type: 'badge' | 'title' | 'points';
+  value: string | number;
+  description: string;
+}
+
+export interface ChallengeProgress {
+  playerId: string;
+  challengeId: string;
+  completed: boolean;
+  bestScore: number;
+  attempts: number;
+  completedAt?: string;
+  progress: Record<string, any>; // Challenge-specific progress data
+}
+
+export interface ChallengeLeaderboard {
+  challengeId: string;
+  entries: Array<{
+    playerId: string;
+    playerName: string;
+    score: number;
+    completedAt: string;
+    rank: number;
+  }>;
+}
+
+// Daily challenge variations
+export const CHALLENGE_TEMPLATES: Record<ChallengeType, Omit<DailyChallenge, 'id' | 'date'>> = {
+  speedRun: {
+    name: "Speed Collector",
+    description: "Collect 20 dots as fast as possible!",
+    type: 'speedRun',
+    config: {
+      dotsToCollect: 20,
+      timeLimit: 60
+    },
+    rewards: [
+      { type: 'badge', value: 'lightning', description: 'Lightning Fast' },
+      { type: 'points', value: 100, description: '100 Bonus Points' }
+    ],
+    difficulty: 'medium',
+    duration: 60
+  },
+  
+  colorMatch: {
+    name: "Color Focus",
+    description: "Only collect blue and green dots. Avoid all others!",
+    type: 'colorMatch',
+    config: {
+      allowedColors: ['#4444ff', '#44ff44'],
+      forbiddenColors: ['#ff4444', '#ffff44', '#ff44ff'],
+      targetScore: 15,
+      maxMisses: 3
+    },
+    rewards: [
+      { type: 'badge', value: 'precise', description: 'Precision Master' },
+      { type: 'points', value: 75, description: '75 Bonus Points' }
+    ],
+    difficulty: 'medium',
+    duration: 90
+  },
+  
+  avoidance: {
+    name: "Danger Zone",
+    description: "Collect any dots except the red ones. Touch red = game over!",
+    type: 'avoidance',
+    config: {
+      forbiddenColors: ['#ff4444'],
+      targetScore: 25,
+      maxMisses: 1
+    },
+    rewards: [
+      { type: 'badge', value: 'survivor', description: 'Danger Survivor' },
+      { type: 'points', value: 150, description: '150 Bonus Points' }
+    ],
+    difficulty: 'hard',
+    duration: 120
+  },
+  
+  kingOfHill: {
+    name: "Center Stage",
+    description: "Stay in the center circle to earn points over time!",
+    type: 'kingOfHill',
+    config: {
+      hillCenter: { x: 400, y: 300 },
+      hillRadius: 80,
+      pointsPerSecond: 2,
+      targetScore: 100,
+      timeLimit: 90
+    },
+    rewards: [
+      { type: 'badge', value: 'king', description: 'King of the Hill' },
+      { type: 'points', value: 125, description: '125 Bonus Points' }
+    ],
+    difficulty: 'medium',
+    duration: 90
+  },
+  
+  treasure: {
+    name: "Treasure Hunter",
+    description: "Find and collect 5 special golden dots worth 10 points each!",
+    type: 'treasure',
+    config: {
+      treasureCount: 5,
+      treasurePoints: 10,
+      timeLimit: 120
+    },
+    rewards: [
+      { type: 'badge', value: 'treasure', description: 'Treasure Hunter' },
+      { type: 'title', value: 'Gold Seeker', description: 'Special Title: Gold Seeker' }
+    ],
+    difficulty: 'easy',
+    duration: 120
+  },
+  
+  survival: {
+    name: "Last Stand",
+    description: "The play area shrinks every 10 seconds. Be the last one standing!",
+    type: 'survival',
+    config: {
+      startRadius: 250,
+      shrinkRate: 15,
+      timeLimit: 120
+    },
+    rewards: [
+      { type: 'badge', value: 'survivor', description: 'Ultimate Survivor' },
+      { type: 'points', value: 200, description: '200 Bonus Points' }
+    ],
+    difficulty: 'hard',
+    duration: 120
+  },
+  
+  relay: {
+    name: "Checkpoint Race",
+    description: "Visit all checkpoints in order as fast as possible!",
+    type: 'relay',
+    config: {
+      checkpoints: [
+        { x: 100, y: 100, order: 1 },
+        { x: 700, y: 100, order: 2 },
+        { x: 700, y: 500, order: 3 },
+        { x: 100, y: 500, order: 4 },
+        { x: 400, y: 300, order: 5 }
+      ],
+      timeLimit: 90
+    },
+    rewards: [
+      { type: 'badge', value: 'racer', description: 'Speed Racer' },
+      { type: 'points', value: 110, description: '110 Bonus Points' }
+    ],
+    difficulty: 'medium',
+    duration: 90
+  },
+  
+  precision: {
+    name: "Bullseye",
+    description: "Hit 10 precise targets. Miss more than 2 and fail!",
+    type: 'precision',
+    config: {
+      targets: Array.from({ length: 10 }, (_, i) => ({
+        x: 150 + (i % 5) * 150,
+        y: 150 + Math.floor(i / 5) * 300,
+        radius: 25
+      })),
+      maxMisses: 2,
+      penaltyPerMiss: 10
+    },
+    rewards: [
+      { type: 'badge', value: 'marksman', description: 'Perfect Marksman' },
+      { type: 'points', value: 175, description: '175 Bonus Points' }
+    ],
+    difficulty: 'hard',
+    duration: 120
+  }
+};
+# Alias command for preview
+salla theme p
   height: number;
 }
 
