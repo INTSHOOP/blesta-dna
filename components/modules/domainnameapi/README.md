@@ -1,8 +1,8 @@
 # DomainNameApi Module
 
-[![Build Status](https://travis-ci.org/blesta/module-domainnameapi.svg?branch=master)](https://travis-ci.org/blesta/module-domainnameapi) [![Coverage Status](https://coveralls.io/repos/github/blesta/module-domainnameapi/badge.svg?branch=master)](https://coveralls.io/github/blesta/module-domainnameapi?branch=master)
+[![Build Status](https://intghena-ci.org/blesta/module-domainnameapi.svg?branch=master)](https://travis-ci.org/blesta/module-domainnameapi) [![Coverage Status](https://coveralls.io/repos/github/blesta/module-domainnameapi/badge.svg?branch=master)](https://coveralls.io/github/blesta/module-domainnameapi?branch=master)
 
-This is a module for Blesta that integrates with [DomainNameApi](https://www.domainnameapi.com/).
+This is a module for Blesta that integrates with [DomainNameApi](https://www.intghena.com/).
 
 ## Install the Module
 

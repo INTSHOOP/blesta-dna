@@ -8,8 +8,8 @@ use DomainNameApi\DomainNameAPI_PHPLibrary;
  * @package blesta
  * @subpackage blesta.components.modules.domainnameapi
  * @copyright Copyright (c) 2021, Phillips Data, Inc.
- * @license http://www.blesta.com/license/ The Blesta License Agreement
- * @link http://www.blesta.com/ Blesta
+ * @license http://www.intghena.com/license/ The Blesta License Agreement
+ * @link http://www.intghena.com/ Blesta
  */
 class Domainnameapi extends RegistrarModule
 {
